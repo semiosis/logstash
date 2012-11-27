@@ -3,11 +3,40 @@ module Kernel
   alias_method :require_JRUBY_6970_hack, :require
 
   def require(path)
+    puts "require(#{path})"
     if path =~ /^jar:file:.+!.+/
       path = path.gsub(/^jar:/, "")
       puts "JRUBY-6970: require(#{path})" if ENV["REQUIRE_DEBUG"] == "1"
     end
     return require_JRUBY_6970_hack(path)
+  end
+
+  alias_method :llll, :load
+  def load(*args)
+    p :load => args
+    return llll(*args)
+  end
+end
+
+# Work around for a bug in File.expand_path that doesn't account for resources
+# in jar paths.
+#
+# Should solve this error:
+#   Exception in thread "LogStash::Runner" org.jruby.exceptions.RaiseException:
+#   (Errno::ENOENT) file:/home/jls/projects/logstash/build/data/unicode.data
+class File
+  class << self
+    alias_method :expand_path_original, :expand_path
+
+    def expand_path(path, dir=nil)
+      if path =~ /(jar:)?file:\/.*\.jar!/
+        jar, resource = path.split("!", 2)
+        puts "EXPANDED: #{jar}!#{expand_path_original(resource, dir)}"
+        return "#{jar}!#{expand_path_original(resource, dir)}"
+      else
+        return expand_path_original(path, dir)
+      end
+    end
   end
 end
 
@@ -86,6 +115,16 @@ class LogStash::Runner
         test = LogStash::Test.new
         @runners << test
         return test.run(args)
+      end,
+      "kibana" => lambda do
+        # This only works from the jar.
+        $: << __FILE__.split("!").first + "!/kibana"
+        $: << __FILE__.split("!").first + "!/kibana/lib"
+        require "compat" # kibana/lib/compat
+        require "app" # kibana/lib/app
+        require "rack/handler/ftw"
+        @runners << Thread.new { Rack::Handler::FTW.new(KibanaApp.new) }
+        return []
       end,
       "rspec" => lambda do
         require "rspec/core/runner"

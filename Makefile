@@ -128,18 +128,25 @@ fix-bundler:
 vendor-gems: | vendor/bundle
 
 .PHONY: vendor/bundle
-vendor/bundle: | vendor $(JRUBY)
-	@echo "=> Installing gems to $@..."
-	#$(QUIET)GEM_HOME=$(GEM_HOME) $(JRUBY_CMD) --1.9 $(GEM_HOME)/bin/bundle install --deployment
+vendor/bundle: | vendor $(JRUBY) build/kibana/kibana.gemspec
+	@echo "=> Installing gems for logstash to $@..."
 	$(QUIET)GEM_HOME=./vendor/bundle/jruby/1.9/ GEM_PATH= $(JRUBY_CMD) --1.9 ./gembag.rb logstash.gemspec 
+	@echo "=> Installing gems for kibana to $@..."
+	$(QUIET)GEM_HOME=./vendor/bundle/jruby/1.9/ GEM_PATH= $(JRUBY_CMD) --1.9 ./gembag.rb build/kibana/kibana.gemspec
 	@# Purge any junk that fattens our jar without need!
 	@# The riak gem includes previous gems in the 'pkg' dir. :(
-	-rm -rf $@/jruby/1.9/gems/riak-client-1.0.3/pkg
+	-$(QUIET)rm -rf $@/jruby/1.9/gems/riak-client-1.0.3/pkg
 	@# Purge any rspec or test directories
-	-rm -rf $@/jruby/1.9/gems/*/spec $@/jruby/1.9/gems/*/test
+	-$(QUIET)rm -rf $@/jruby/1.9/gems/*/spec $@/jruby/1.9/gems/*/test
 	@# Purge any comments in ruby code.
 	@#-find $@/jruby/1.9/gems/ -name '*.rb' | xargs -n1 sed -i -re '/^[ \t]*#/d; /^[ \t]*$$/d'
-	touch $@
+
+build/kibana: | build
+	mkdir $@
+
+build/kibana/kibana.rb build/kibana/kibana.gemspec: | build/kibana
+	wget -O - https://github.com/jordansissel/Kibana/archive/kibana-ruby.tar.gz \
+	| tar --strip-components 1 -C build/kibana/ -zx
 
 build:
 	-$(QUIET)mkdir -p $@
@@ -153,6 +160,7 @@ build/ruby: | build
 .PHONY: build/monolith
 build/monolith: $(ELASTICSEARCH) $(JRUBY) $(JODA) $(GEOIP) vendor-gems | build
 build/monolith: compile copy-ruby-files vendor/jar/graphtastic-rmiclient.jar
+build/monolith: build/kibana/kibana.rb
 	-$(QUIET)mkdir -p $@
 	@# Unpack all the 3rdparty jars and any jars in gems
 	$(QUIET)find $$PWD/vendor/bundle $$PWD/vendor/jar -name '*.jar' \
@@ -183,6 +191,7 @@ VENDOR_DIR=$(shell ls -d vendor/bundle/*ruby/*)
 jar: build/logstash-$(VERSION)-monolithic.jar
 build/logstash-$(VERSION)-monolithic.jar: | build/monolith
 build/logstash-$(VERSION)-monolithic.jar: JAR_ARGS=-C build/ruby .
+build/logstash-$(VERSION)-monolithic.jar: JAR_ARGS+=-C build/ kibana
 build/logstash-$(VERSION)-monolithic.jar: JAR_ARGS+=-C build/monolith .
 build/logstash-$(VERSION)-monolithic.jar: JAR_ARGS+=-C $(VENDOR_DIR) gems
 build/logstash-$(VERSION)-monolithic.jar: JAR_ARGS+=-C $(VENDOR_DIR) specifications
@@ -198,8 +207,8 @@ build/logstash-$(VERSION)-monolithic.jar:
 
 build/flatgems: | build vendor/bundle
 	mkdir $@
-	for i in $(VENDOR_DIR)/gems/*/lib; do \
-		rsync -av $$i/ $@/lib ; \
+	for i in $(VENDOR_DIR)/gems/*/lib $(VENDOR_DIR)/gems/addressable*/data; do \
+		rsync -av $$i $@ ; \
 	done
 
 flatjar-test:
@@ -208,10 +217,14 @@ flatjar-test:
 jar-test:
 	GEM_HOME= GEM_PATH= java -jar build/logstash-$(VERSION)-monolithic.jar rspec spec/support/*.rb spec/filters/*.rb spec/examples/*.rb spec/event.rb spec/jar.rb
 
-flatjar: build/logstash-$(VERSION)-flatjar.jar
-build/jar: | build build/flatgems build/monolith
-	$(QUIET)mkdir build/jar
-	$(QUIET)rsync -av --delete build/flatgems/lib/ build/monolith/ build/ruby/ patterns build/jar/
+.PHONY: flatjar build/jar
+flatjar: 
+	-$(QUIET)rm -rf build
+	-$(QUIET)$(MAKE) build/logstash-$(VERSION)-flatjar.jar
+
+build/jar: | build build/flatgems build/monolith compile
+	-$(QUIET)mkdir build/jar
+	$(QUIET)rsync -av --delete build/flatgems/lib/ build/flatgems/data build/monolith/ build/ruby/ patterns build/kibana build/jar/
 	$(QUIET)(cd lib; rsync -av --delete logstash/web/public ../build/jar/logstash/web/public)
 	$(QUIET)(cd lib; rsync -av --delete logstash/web/views ../build/jar/logstash/web/views)
 	$(QUIET)(cd lib; rsync -av --delete logstash/certs ../build/jar/logstash/certs)
