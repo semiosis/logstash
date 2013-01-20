@@ -70,7 +70,25 @@ describe LogStash::Event do
       insist { @event['f\.g.h'] } == "i"
       insist { @event['j.k3\.4'] } == "m"
       insist { @event['j.5'] } == 7
-
+    end
+  end
+  
+  context "#[]=" do
+    it "should overwrite a field" do
+      @event["a"] = "b'"
+      insist { @event["a"] } == "b'"
+    end
+    it "should overwrite a field with literal dot" do
+      @event['c\.d'] = "e'"
+      insist { @event['c\.d'] } == "e'"
+    end
+    it "should overwrite a deep field" do
+      @event["c.d"] = "f'"
+      insist { @event["c.d"] } == "f'"
+    end
+    it "should overwrite a deep field with literal do" do
+      @event['f\.g.h'] = "i'"
+      insist { @event['f\.g.h'] } == "i'"
     end
   end
 

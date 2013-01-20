@@ -165,9 +165,44 @@ class LogStash::Event
   def []=(key, value)
     if @data.has_key?(key)
       @data[key] = value
+    elsif key.index(/(?<!\\)\./)
+      obj = @data["@fields"]
+      lastobj = obj
+      traversed_segments = []
+      input_segments = key.split(/(?<!\\)\./)
+      # "." is what ES uses to access structured data, so adopt that
+      # idea here, too.  "foo.bar" will access key "bar" under hash "foo".
+      input_segments.each do |segment|
+        segment.gsub!(/\\\./, ".")
+        if (obj.is_a?(Array) || (obj.is_a?(Hash) && !obj.member?(segment)) )
+          # try to safely cast segment to integer for the 0 in foo.0.bar
+          begin
+            segment = Integer(segment)
+          rescue Exception
+            #not an int, do nothing, segment remains a string
+          end
+        end
+        if obj
+          lastobj = obj
+          traversed_segments << segment
+          obj = obj[segment] rescue nil
+        else
+          break
+        end
+      end # key.split.each
+      if (traversed_segments.length == input_segments.length)
+        target_parent = traversed_segments[traversed_segments.length-1]
+        lastobj[target_parent] = value
+      end
     else
-      @data["@fields"][key] = value
+      @data["@fields"][key.gsub(/\\\./, ".")] = value
     end
+
+
+
+
+
+
   end # def []=
 
   def fields; return @data["@fields"] end # def fields
